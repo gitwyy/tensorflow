@@ -76,14 +76,6 @@ absl::string_view HloLexer::StringPieceFromPointers(const char* begin,
   return absl::string_view(begin, end - begin);
 }
 
-tensorflow::RegexpStringPiece HloLexer::RegexpStringPieceFromPointers(
-    const char* begin, const char* end) const {
-  CHECK(begin <= end);
-  CHECK(begin == buf_.end() || CanDereference(begin));
-  CHECK(end == buf_.end() || CanDereference(end));
-  return tensorflow::RegexpStringPiece(begin, end - begin);
-}
-
 TokKind HloLexer::LookAhead() {
   if (GetKind() == TokKind::kEof || GetKind() == TokKind::kError) {
     return GetKind();
@@ -153,6 +145,8 @@ TokKind HloLexer::LexToken() {
         return LexPercent();
       case ':':
         return TokKind::kColon;
+      case '*':
+        return TokKind::kAsterisk;
       case '[':
         return TokKind::kLsquare;
       case ']':
@@ -212,6 +206,15 @@ TokKind HloLexer::LexToken() {
         // A lone '/' is an error.
         return TokKind::kError;
       }
+      case '.':
+        if (PeekCurrentChar() == '.') {
+          current_ptr_++;
+          if (PeekCurrentChar() == '.') {
+            current_ptr_++;
+            return TokKind::kDots;
+          }
+        }
+        return TokKind::kError;
       case '"':
         return LexString();
     }
@@ -282,8 +285,8 @@ TokKind HloLexer::LexIdentifier() {
 #undef KEYWORD
 
   {
-    auto consumable =
-        RegexpStringPieceFromPointers(token_state_.token_start, buf_.end());
+    absl::string_view consumable =
+        StringPieceFromPointers(token_state_.token_start, buf_.end());
     static LazyRE2 dim_labels_pattern = {
         R"([0-9bf]{2,}_[0-9io]{2,}->[0-9bf]{2,})"};
     if (RE2::Consume(&consumable, *dim_labels_pattern)) {
@@ -325,8 +328,8 @@ TokKind HloLexer::LexPercent() {
 // int ::=  [-]?[0-9]+
 // negative inf ::= '-inf'
 TokKind HloLexer::LexNumberOrPattern() {
-  auto consumable =
-      RegexpStringPieceFromPointers(token_state_.token_start, buf_.end());
+  absl::string_view consumable =
+      StringPieceFromPointers(token_state_.token_start, buf_.end());
   static LazyRE2 float_pattern = {
       R"([-]?((\d+|\d+[.]\d*|\d*[.]\d+)([eE][+-]?\d+))|[-]?(\d+[.]\d*|\d*[.]\d+))"};
   if (RE2::Consume(&consumable, *float_pattern)) {
@@ -426,8 +429,8 @@ absl::string_view HloLexer::GetLine(LocTy loc) const {
 // Lexes quoted string with escaping characters. If matched, the quoted string
 // will be unescaped and stored to token_state_.str_val.
 TokKind HloLexer::LexString() {
-  auto consumable =
-      RegexpStringPieceFromPointers(token_state_.token_start, buf_.end());
+  absl::string_view consumable =
+      StringPieceFromPointers(token_state_.token_start, buf_.end());
   static LazyRE2 escaping_pattern = {R"("([^"\\]|\\.)*")"};
   if (RE2::Consume(&consumable, *escaping_pattern)) {
     current_ptr_ = consumable.begin();
@@ -455,6 +458,8 @@ string TokKindToString(TokKind kind) {
       return "kComma";
     case TokKind::kColon:
       return "kColon";
+    case TokKind::kAsterisk:
+      return "kAsterisk";
     case TokKind::kLsquare:
       return "kLsquare";
     case TokKind::kRsquare:
@@ -513,6 +518,8 @@ string TokKindToString(TokKind kind) {
       return "kInt";
     case TokKind::kDecimal:
       return "kDecimal";
+    case TokKind::kDots:
+      return "kDots";
   }
 }
 
